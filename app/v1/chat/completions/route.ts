@@ -1,61 +1,67 @@
-// pages/api/proxy/[...path].js
+// app/v1/chat/completions/route.ts
 
-export default async function handler(req, res) {
-  // 提取动态路径（例如 chat/completions）
-  const { path } = req.query;
-  const targetPath = Array.isArray(path) ? path.join('/') : path;
-  const targetUrl = `https://integrate.api.nvidia.com/v1/${targetPath}`;
+export async function POST(request: Request) {
+  // 目标 NVIDIA NIM API 地址
+  const targetUrl = 'https://integrate.api.nvidia.com/v1/chat/completions';
 
-  // 从客户端请求中获取 Authorization 头
-  const authHeader = req.headers.authorization;
+  // 从请求中获取 Authorization 头
+  const authHeader = request.headers.get('authorization');
   if (!authHeader) {
-    return res.status(401).json({ error: 'Missing Authorization header' });
+    return new Response(JSON.stringify({ error: 'Missing Authorization header' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   try {
-    const fetchOptions = {
-      method: req.method,
-      headers: {
-        // 原样转发客户端提供的认证头
-        'Authorization': authHeader,
-        'Content-Type': req.headers['content-type'] || 'application/json',
-      },
-    };
+    // 获取客户端请求体
+    const body = await request.text();
 
-    // 处理请求体（POST/PUT 等方法）
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      fetchOptions.body = JSON.stringify(req.body);
-    }
+    // 构造转发请求
+    const fetchOptions: RequestInit = {
+      method: 'POST',
+      headers: {
+        'Authorization': authHeader,
+        'Content-Type': request.headers.get('content-type') || 'application/json',
+      },
+      body: body,
+    };
 
     const response = await fetch(targetUrl, fetchOptions);
 
-    // 转发状态码
-    res.status(response.status);
-
-    // 处理响应头与内容
+    // 处理流式响应
     const contentType = response.headers.get('content-type');
-    if (contentType) {
-      res.setHeader('Content-Type', contentType);
-    }
-
     if (contentType?.includes('text/event-stream')) {
-      // 流式响应：逐块转发
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-      const reader = response.body.getReader();
-      res.flushHeaders();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        res.write(value);
-      }
-      res.end();
+      // 返回流式响应
+      return new Response(response.body, {
+        status: response.status,
+        headers: {
+          'Content-Type': contentType,
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+        },
+      });
     } else {
+      // 非流式响应，读取完整内容
       const data = await response.text();
-      res.send(data);
+      return new Response(data, {
+        status: response.status,
+        headers: {
+          'Content-Type': contentType || 'application/json',
+        },
+      });
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('Proxy error:', error);
-    res.status(500).json({ error: 'Proxy request failed', details: error.message });
+    return new Response(JSON.stringify({ error: 'Proxy request failed', details: error.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
+}
+
+// 可选：处理其他 HTTP 方法（如果 NIM API 支持 GET 等）
+export async function GET(request: Request) {
+  // 若有 GET 需求，类似处理
+  return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 });
 }
