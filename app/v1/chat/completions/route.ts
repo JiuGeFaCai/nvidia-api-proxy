@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-export const runtime = 'edge'; // 关键：启用 Edge Runtime
+export const runtime = 'edge';
 
 const NVIDIA_API_BASE = 'https://integrate.api.nvidia.com/v1';
 
 export async function POST(request: NextRequest) {
-  // 解析请求体（Edge 环境下 body 只能读一次）
-  const body = await request.json();
+  // 解析请求体，使用类型断言绕过 unknown 检查
+  const body = (await request.json()) as {
+    stream?: boolean;
+    model?: string;
+    messages?: unknown[];
+    [key: string]: unknown;
+  };
 
-  // 优先使用请求头中的 API Key，否则回退到环境变量
   const apiKey =
     request.headers.get('Authorization')?.replace('Bearer ', '') ||
     process.env.NVIDIA_API_KEY;
@@ -20,7 +24,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // 判断是否为流式请求
+  // 安全读取 stream 字段
   const isStream = body.stream === true;
 
   try {
@@ -33,7 +37,6 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify(body),
     });
 
-    // 流式响应：直接透传 response.body
     if (isStream && response.body) {
       return new NextResponse(response.body, {
         status: response.status,
@@ -45,7 +48,6 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // 非流式响应：等待完整 JSON 后返回
     const data = await response.json();
     return new NextResponse(JSON.stringify(data), {
       status: response.status,
