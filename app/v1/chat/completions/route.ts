@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 
 // 优化 1：开启 Edge Runtime 显著降低网络代理的延迟和冷启动时间
 export const runtime = 'edge'; 
-
+export const preferredRegion = 'iad1';
 const NVIDIA_API_BASE = 'https://integrate.api.nvidia.com/v1';
 
 export async function POST(request: NextRequest) {
