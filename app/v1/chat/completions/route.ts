@@ -1,29 +1,47 @@
-import { NextRequest, NextResponse } from 'next/server';
-export const runtime = 'edge';
-const NVIDIA_API_BASE = 'https://integrate.api.nvidia.com/v1';
+export const config = {
+  runtime: 'edge',
+};
 
-export async function POST(request: NextRequest) {
-  const body = await request.json();
-  
-  const apiKey = request.headers.get('Authorization')?.replace('Bearer ', '') 
-    || process.env.NVIDIA_API_KEY;
+export default async function handler(req) {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': '*',
+      },
+    });
+  }
+
+  const url = new URL(req.url);
+  const targetUrl = new URL(url.pathname + url.search, 'https://integrate.api.nvidia.com');
+
+  const headers = new Headers(req.headers);
+  headers.delete('host');
+  headers.delete('origin');
+  headers.delete('referer');
 
   try {
-    const response = await fetch(`${NVIDIA_API_BASE}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
+    const response = await fetch(targetUrl.toString(), {
+      method: req.method,
+      headers: headers,
+      body: req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
+      redirect: 'follow',
     });
 
-    const data = await response.json();
-    return NextResponse.json(data, { status: response.status });
+    const responseHeaders = new Headers(response.headers);
+    responseHeaders.set('Access-Control-Allow-Origin', '*');
+
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
+    });
   } catch (error) {
-    return NextResponse.json(
-      { error: 'Proxy error', details: String(error) },
-      { status: 500 }
-    );
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 }
