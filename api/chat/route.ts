@@ -1,0 +1,50 @@
+import { NextRequest, NextResponse } from 'next/server';
+
+const NVIDIA_API_BASE = 'https://integrate.api.nvidia.com/v1';
+
+export async function POST(request: NextRequest) {
+  const body = await request.json();
+  
+  // 从请求头获取 API Key，或者从环境变量读取
+  const apiKey = request.headers.get('Authorization')?.replace('Bearer ', '') 
+    || process.env.NVIDIA_API_KEY;
+  
+  if (!apiKey) {
+    return NextResponse.json(
+      { error: 'Missing NVIDIA API Key' },
+      { status: 401 }
+    );
+  }
+
+  try {
+    const response = await fetch(`${NVIDIA_API_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const data = await response.json();
+    
+    return NextResponse.json(data, { status: response.status });
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Proxy error', details: String(error) },
+      { status: 500 }
+    );
+  }
+}
+
+// 支持 streaming
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    },
+  });
+}
