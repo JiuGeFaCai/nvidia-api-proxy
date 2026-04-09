@@ -1,30 +1,32 @@
+// ✅ No default export – only named exports
 export const runtime = 'edge';
 
-export default async function handler(req) {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, {
-      status: 200,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': '*',
-      },
-    });
-  }
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': '*',
+    },
+  });
+}
 
-  const url = new URL(req.url);
+export async function POST(request: Request) {
+  const url = new URL(request.url);
   const targetUrl = new URL(url.pathname + url.search, 'https://integrate.api.nvidia.com');
 
-  const headers = new Headers(req.headers);
+  // Forward headers (remove browser-specific ones)
+  const headers = new Headers(request.headers);
   headers.delete('host');
   headers.delete('origin');
   headers.delete('referer');
 
   try {
     const response = await fetch(targetUrl.toString(), {
-      method: req.method,
-      headers: headers,
-      body: req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
+      method: 'POST',
+      headers,
+      body: request.body, // streams the body directly
       redirect: 'follow',
     });
 
@@ -36,7 +38,7 @@ export default async function handler(req) {
       statusText: response.statusText,
       headers: responseHeaders,
     });
-  } catch (error) {
+  } catch (error: any) {
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
