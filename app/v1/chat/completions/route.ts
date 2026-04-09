@@ -1,52 +1,61 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
-// 优化 1：开启 Edge Runtime 显著降低网络代理的延迟和冷启动时间
-export const runtime = 'edge'; 
+export const runtime = 'edge'; // 关键：启用 Edge Runtime
 
 const NVIDIA_API_BASE = 'https://integrate.api.nvidia.com/v1';
 
 export async function POST(request: NextRequest) {
-  try {
-    // 优化 2：更安全的 Header 解析方式，避免 .replace 匹配异常
-    const authHeader = request.headers.get('Authorization');
-    const apiKey = authHeader?.startsWith('Bearer ') 
-      ? authHeader.slice(7) 
-      : process.env.NVIDIA_API_KEY;
+  // 解析请求体（Edge 环境下 body 只能读一次）
+  const body = await request.json();
 
-    // 优化 3：直接透传请求流 (ReadableStream)，移除 await request.json()
-    // 这样避免了解析 JSON 再序列化的内存消耗，提升转发效率
+  // 优先使用请求头中的 API Key，否则回退到环境变量
+  const apiKey =
+    request.headers.get('Authorization')?.replace('Bearer ', '') ||
+    process.env.NVIDIA_API_KEY;
+
+  if (!apiKey) {
+    return new NextResponse(
+      JSON.stringify({ error: 'Missing NVIDIA API Key' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  // 判断是否为流式请求
+  const isStream = body.stream === true;
+
+  try {
     const response = await fetch(`${NVIDIA_API_BASE}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // 已删除判断拦截。如果 apiKey 未定义，传入空字符串，将鉴权失败的 401 报错交给上游处理
-        'Authorization': `Bearer ${apiKey || ''}`,
+        Authorization: `Bearer ${apiKey}`,
       },
-      body: request.body, 
-      // 在 Node/Edge 中使用 Fetch API 发送流式 body 必须声明 duplex: 'half'
-      // @ts-expect-error TS DOM lib 可能缺少对 duplex 的定义，但运行时必须存在
-      duplex: 'half',
+      body: JSON.stringify(body),
     });
 
-    // 优化 4：直接返回上游的响应流，移除 await response.json()
-    // 核心改进：这天然支持了 LLM 的打字机流式输出 (前端传入 stream: true 时不会被代理阻塞)
-    // 复制上游的 status 和 headers 确保 CORS 等配置一并返回
-    return new Response(response.body, {
+    // 流式响应：直接透传 response.body
+    if (isStream && response.body) {
+      return new NextResponse(response.body, {
+        status: response.status,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        },
+      });
+    }
+
+    // 非流式响应：等待完整 JSON 后返回
+    const data = await response.json();
+    return new NextResponse(JSON.stringify(data), {
       status: response.status,
-      headers: response.headers,
+      headers: { 'Content-Type': 'application/json' },
     });
-
-  } catch (error) {
-    // 优化 5：增强错误捕获时的类型安全和返回格式
-    return new Response(
-      JSON.stringify({ 
-        error: 'Proxy Error', 
-        details: error instanceof Error ? error.message : String(error) 
-      }),
-      { 
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
-      }
+  } catch (error: any) {
+    console.error('Proxy error:', error);
+    return new NextResponse(
+      JSON.stringify({ error: 'Proxy error', details: error.message }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
 }
